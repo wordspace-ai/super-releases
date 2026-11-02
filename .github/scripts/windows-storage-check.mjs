@@ -12,7 +12,7 @@ assert.match(version,/^\d+\.\d+\.\d+$/);
 const work=mkdtempSync(join(tmpdir(),'super-storage-native-')),dir=join(work,'data'),children=new Set();
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 const exe=root=>join(root,'Super Beta.exe'),resources=root=>join(root,'resources');
-const env={...process.env,ELECTRON_RUN_AS_NODE:'1',SUPER_IN_APP:'1',SUPER_EDITION:'beta',HOME:work,SUPER_APP_HOME:work,SUPER_DEV_DATA:'',SUPER_DEV_PORT:'',SUPER_POSTHOG_HOST:'http://127.0.0.1:1'};
+const env={...process.env,ELECTRON_RUN_AS_NODE:'1',SUPER_IN_APP:'1',SUPER_EDITION:'beta',SUPER_APP_HOME:work,SUPER_DEV_DATA:'',SUPER_DEV_PORT:'',SUPER_POSTHOG_HOST:'http://127.0.0.1:1'};
 function start(root,v){const p=spawn(exe(root),[join(resources(root),'service/service.cjs')],{env:{...env,SUPER_APP_DATA_DIR:dir,SUPER_APP_RES:resources(root),SUPER_APP_VERSION:v},stdio:['ignore','pipe','pipe']});p.output='';p.stdout.on('data',d=>p.output+=d);p.stderr.on('data',d=>p.output+=d);children.add(p);return p;}
 async function ready(p){for(const until=Date.now()+120000;Date.now()<until;await sleep(100)){if(p.exitCode!==null||p.signalCode)throw Error('Packaged service exited '+p.output.slice(-1200));try{const info=JSON.parse(readFileSync(join(dir,'service.json')));if(info.pid===p.pid&&(await fetch(info.url+'/v1/health')).ok)return info;}catch{}}throw Error('Packaged service timeout');}
 async function stop(p){if(p.exitCode!==null||p.signalCode)return;const exit=new Promise(r=>p.once('exit',r));p.kill();await Promise.race([exit,sleep(10000)]);if(p.exitCode===null&&!p.signalCode)p.kill('SIGKILL');}

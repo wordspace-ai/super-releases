@@ -1,0 +1,67 @@
+name: Super packaged storage validation
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        required: true
+        type: string
+      installer_sha256:
+        required: true
+        type: string
+permissions:
+  contents: write
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24'
+      - name: Verify actual Windows installers and packaged services
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TARGET_TAG: ${{ inputs.tag }}
+          EXPECTED_SHA: ${{ inputs.installer_sha256 }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ($env:TARGET_TAG -notmatch '^v\d+\.\d+\.\d+$' -or $env:EXPECTED_SHA -notmatch '^[a-f0-9]{64}$') { throw 'Invalid candidate identity' }
+          $version = $env:TARGET_TAG.Substring(1)
+          $old = Join-Path $env:RUNNER_TEMP 'super-old-download'
+          $new = Join-Path $env:RUNNER_TEMP 'super-new-download'
+          gh release download v0.6.2 --repo $env:GITHUB_REPOSITORY --pattern 'Super-Beta-0.6.2-win-x64.exe' --dir $old
+          if ($LASTEXITCODE -ne 0) { throw 'Old installer download failed' }
+          gh release download $env:TARGET_TAG --repo $env:GITHUB_REPOSITORY --pattern "Super-Beta-$version-win-x64.exe" --dir $new
+          if ($LASTEXITCODE -ne 0) { throw 'Candidate download failed' }
+          $installer = Join-Path $new "Super-Beta-$version-win-x64.exe"
+          if ((Get-FileHash $installer -Algorithm SHA256).Hash.ToLower() -ne $env:EXPECTED_SHA) { throw 'Candidate digest mismatch' }
+          $seven = Join-Path $env:ProgramFiles '7-Zip/7z.exe'
+          & $seven x (Join-Path $old 'Super-Beta-0.6.2-win-x64.exe') "-o$old/extracted" -y | Out-Null
+          if ($LASTEXITCODE -ne 0) { throw 'Old installer extraction failed' }
+          $payload = @(Get-ChildItem "$old/extracted" -Recurse -Filter 'app-64.7z')
+          if ($payload.Count -ne 1) { throw 'Missing old application payload' }
+          & $seven x $payload[0].FullName "-o$old/app" -y | Out-Null
+          if ($LASTEXITCODE -ne 0) { throw 'Old application extraction failed' }
+          $installed = Join-Path $env:RUNNER_TEMP 'super-installed-candidate'
+          $env:SUPER_APP_HOME = Join-Path $env:RUNNER_TEMP 'super-installer-test-home'
+          $env:SUPER_POSTHOG_HOST = 'http://127.0.0.1:1'
+          $p = Start-Process -FilePath $installer -ArgumentList @('/S', "/D=$installed") -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw 'Native NSIS installation failed' }
+          Get-Process -Name 'Super Beta' -ErrorAction SilentlyContinue | Where-Object { $_.Path.StartsWith($installed) } | Stop-Process -Force
+          if (-not (Test-Path "$installed/Super Beta.exe")) { throw 'Installed executable missing' }
+          $result = & node .github/scripts/windows-storage-check.mjs "$old/app" $installed $version
+          if ($LASTEXITCODE -ne 0) { throw 'Native storage checks failed' }
+          $result | Write-Output
+          $json = $result | Select-Object -Last 1 | ConvertFrom-Json
+          if (-not $json.ok) { throw 'Native report rejected' }
+          Copy-Item $json.report report.json
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: windows-storage-report
+          path: report.json
+          if-no-files-found: error
+          retention-days: 7

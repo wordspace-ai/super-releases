@@ -37,6 +37,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Old installer download failed' }
           gh release download $env:TARGET_TAG --repo $env:GITHUB_REPOSITORY --pattern "Super-Beta-$version-win-x64.exe" --dir $new
           if ($LASTEXITCODE -ne 0) { throw 'Candidate download failed' }
+          Remove-Item Env:GH_TOKEN
           $installer = Join-Path $new "Super-Beta-$version-win-x64.exe"
           if ((Get-FileHash $installer -Algorithm SHA256).Hash.ToLower() -ne $env:EXPECTED_SHA) { throw 'Candidate digest mismatch' }
           $seven = Join-Path $env:ProgramFiles '7-Zip/7z.exe'
